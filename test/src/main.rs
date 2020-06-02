@@ -21,5 +21,5 @@ fn main() {
     coordinates.push(Coordinate{ id: 2, x: 11.0, y:11.0});
     coordinates.push(Coordinate{ id: 3, x: 1.0, y:2.0});
 
-    cluster(coordinates.as_ref(), 5, None, None);
+    cluster(coordinates, 5, None, None);
 }
