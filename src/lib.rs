@@ -1,14 +1,15 @@
 extern crate ordered_float;
 
 use ordered_float::OrderedFloat;
+use std::rc::Rc;
+use std::cell::RefCell;
 /// Implement this trait to every point
 pub trait IntoPoint: Sized {
     /// Calculating the distance to another point
     /// * `neighbor` - Other point
     fn get_distance(&self, neighbor: &Self) -> f64;
 
-    /// Returning the unique identity of the point
-    fn get_id(&self) -> u32;
+    fn get_id(&self)-> usize;
 }
 
 pub struct Cluster<F> {
@@ -81,18 +82,22 @@ impl<F: IntoPoint> Kddbscan<F> {
                 let filtered_distances: Vec<f64> = distances
                     .iter()
                     .filter(|distance| distance.into_inner() != max)
-                    .map(|distance|{distance.into_inner()})
+                    .map(|distance| distance.into_inner())
                     .collect();
 
-                let avg:f64 = filtered_distances.iter().sum::<f64>() / filtered_distances.len() as f64;
+                let avg: f64 =
+                    filtered_distances.iter().sum::<f64>() / filtered_distances.len() as f64;
 
-                Ok(max/ avg)
+                Ok(max / avg)
             }
             None => Err("Can not find a neighbor"),
         }
     }
 
-    fn get_mutual_neighbors<'a, 'b: 'a>(&'a self, point: &'b F) -> Vec<&F> {
+    fn get_mutual_neighbors<'a, 'b: 'a>(
+        &'a self,
+        point: &'b F,
+    ) -> Vec<&F> {
         let mut neighbors = vec![];
 
         fn fill_mutual_neighbor<'a, 'b: 'a, T: IntoPoint>(
@@ -101,34 +106,48 @@ impl<F: IntoPoint> Kddbscan<F> {
             point: &'b T,
             n: u32,
         ) {
-            let mut points_iter = kddbscan.points.iter();
+            // Checking the minimum number of mutual neihborhood
             if n >= kddbscan.n {
-                inner_neighbors.push(point);
-                while let Some(in_point) = points_iter.next() {
+                if n != 0 {
+                    inner_neighbors.push(point);
+                }
+            }
+
+            let mut points: Vec<&T> =
+                kddbscan.points.iter().map(|point| point).collect();
+
+            // Sorting other points by distance to the selected point
+            points.sort_by(|a, b| {
+                OrderedFloat::from(a.get_distance(point))
+                    .cmp(&OrderedFloat::from(b.get_distance(point)))
+            });
+
+            // Selecting only k number of values
+            let mut i = 0;
+            while i < kddbscan.k {
+                let in_point_result = points.get(i as usize);
+                if let Some(in_point) = in_point_result {
                     if in_point.get_id() != point.get_id() {
+                        // Recursively selecting mutual neighbors until original point met.
                         fill_mutual_neighbor(inner_neighbors, kddbscan, in_point, n + 1);
                     }
                 }
+                i += 1;
             }
         }
 
         fill_mutual_neighbor(&mut neighbors, self, point, 0);
 
+        // Removing duplicates
+        neighbors.sort_by(|a, b| a.get_id().cmp(&b.get_id()));
+        neighbors.dedup_by(|a, b| a.get_id() == b.get_id());
+
         neighbors
     }
 
-    fn expand_cluster(&mut self, point: F, n: u32) {
-        let exist_cluster_result = self.clusters.get_mut(n as usize);
-
-        match exist_cluster_result {
-            Some(exist_cluster) => {
-                exist_cluster.add_point(point);
-            }
-            None => {
-                let mut cluster = Cluster::new(n);
-                cluster.add_point(point);
-                self.clusters.push(cluster);
-            }
+    fn expand_cluster(&self, point: F, cluster_id: usize) {
+        for point in self.points.iter() {
+            
         }
     }
 
