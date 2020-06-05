@@ -1,15 +1,55 @@
 extern crate ordered_float;
 
 use ordered_float::OrderedFloat;
-use std::rc::Rc;
 use std::cell::RefCell;
+
 /// Implement this trait to every point
 pub trait IntoPoint: Sized {
     /// Calculating the distance to another point
     /// * `neighbor` - Other point
     fn get_distance(&self, neighbor: &Self) -> f64;
+}
 
-    fn get_id(&self)-> usize;
+/// Cluster id types
+/// See `ExpandCluster` procedure in [this](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm) research.
+pub enum ClusterId {
+    Outline,
+    Unclassified,
+    Classified(usize),
+}
+
+/// This struct is using to store temporary values for points
+/// such as cluster_id and index of the point
+pub struct PointWrapper<F: IntoPoint> {
+    point: F,
+    cluster_id: ClusterId,
+    index: usize,
+}
+
+impl<F: IntoPoint> PointWrapper<F> {
+    pub fn new(index: usize, point: F) -> PointWrapper<F> {
+        PointWrapper {
+            point,
+            index,
+            cluster_id: ClusterId::Unclassified,
+        }
+    }
+
+    pub fn set_cluster_id(&mut self, cluster_id: ClusterId) {
+        self.cluster_id = cluster_id;
+    }
+
+    pub fn get_cluster_id(&self) -> &ClusterId {
+        &self.cluster_id
+    }
+
+    pub fn get_distance(&self, wrapper: &PointWrapper<F>) -> f64 {
+        self.point.get_distance(&wrapper.point)
+    }
+
+    pub fn get_id(&self) -> usize {
+        self.index
+    }
 }
 
 pub struct Cluster<F> {
@@ -39,7 +79,7 @@ impl<F> Cluster<F> {
 ///
 /// [Read More](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm)
 pub struct Kddbscan<F: IntoPoint> {
-    points: Vec<F>,
+    points: Vec<PointWrapper<F>>,
     k: u32,
     n: u32,
     deviation_factor: u32,
@@ -48,8 +88,16 @@ pub struct Kddbscan<F: IntoPoint> {
 
 impl<F: IntoPoint> Kddbscan<F> {
     pub fn new<T: IntoPoint>(points: Vec<T>, k: u32, n: u32, deviation_factor: u32) -> Kddbscan<T> {
+        let mut i = 0;
+        let mut wrappers: Vec<PointWrapper<T>> = vec![];
+
+        for point in points {
+            wrappers.push(PointWrapper::new(i, point));
+            i += 1;
+        }
+
         Kddbscan {
-            points,
+            points: wrappers,
             k,
             n,
             deviation_factor,
@@ -67,7 +115,7 @@ impl<F: IntoPoint> Kddbscan<F> {
         }
     }
 
-    fn calculate_deviation_factor(&self, point: &F) -> Result<f64, &'static str> {
+    fn calculate_deviation_factor(&self, point: &PointWrapper<F>) -> Result<f64, &'static str> {
         let neighbors = self.get_mutual_neighbors(point);
 
         let distances: Vec<OrderedFloat<f64>> = neighbors
@@ -96,14 +144,14 @@ impl<F: IntoPoint> Kddbscan<F> {
 
     fn get_mutual_neighbors<'a, 'b: 'a>(
         &'a self,
-        point: &'b F,
-    ) -> Vec<&F> {
+        point: &'b PointWrapper<F>,
+    ) -> Vec<&PointWrapper<F>> {
         let mut neighbors = vec![];
 
         fn fill_mutual_neighbor<'a, 'b: 'a, T: IntoPoint>(
-            inner_neighbors: &mut Vec<&'a T>,
+            inner_neighbors: &mut Vec<&'a PointWrapper<T>>,
             kddbscan: &'b Kddbscan<T>,
-            point: &'b T,
+            point: &'b PointWrapper<T>,
             n: u32,
         ) {
             // Checking the minimum number of mutual neihborhood
@@ -113,7 +161,7 @@ impl<F: IntoPoint> Kddbscan<F> {
                 }
             }
 
-            let mut points: Vec<&T> =
+            let mut points: Vec<&PointWrapper<T>> =
                 kddbscan.points.iter().map(|point| point).collect();
 
             // Sorting other points by distance to the selected point
@@ -145,10 +193,56 @@ impl<F: IntoPoint> Kddbscan<F> {
         neighbors
     }
 
-    fn expand_cluster(&self, point: F, cluster_id: usize) {
-        for point in self.points.iter() {
-            
+    fn expand_cluster(&mut self, point: &mut PointWrapper<F>, cluster_id: usize) {
+        let ref_cell = RefCell::from(self);
+        let mut core_points: Vec<&mut PointWrapper<F>> = vec![];
+        core_points.push(point);
+
+        for cur_point in core_points.iter_mut() {
+            let self_borrow = ref_cell.borrow();
+            let neighbor_ids: Vec<usize> = self_borrow
+                .get_mutual_neighbors(cur_point)
+                .iter()
+                .map(|wrapper| wrapper.get_id())
+                .collect();
+
+            cur_point.set_cluster_id(ClusterId::Classified(cluster_id));
+
+            let mut self_borrow_mut = ref_cell.borrow_mut();
+            let neighbors_iter_mut = self_borrow_mut.points.iter_mut();
+            let neighbors: Vec<&mut PointWrapper<F>> = neighbors_iter_mut
+                .filter(|wrapper| neighbor_ids.iter().any(|id| id == &wrapper.get_id()))
+                .collect();
+
+            for neighbor in neighbors {
+                match neighbor.get_cluster_id() {
+                    ClusterId::Classified(_) => {}
+                    _ => {
+                        neighbor.set_cluster_id(ClusterId::Classified(cluster_id));
+                    }
+                }
+
+                let dev_density = self_borrow
+                    .calculate_deviation_factor(neighbor)
+                    .expect("Can not calculate deviation factor.")
+                    as u32;
+
+                if dev_density <= self_borrow.deviation_factor
+                    && self_borrow.density_reachable(neighbor, cur_point)
+                {
+                    core_points.push(neighbor);
+                } else {
+                    neighbor.set_cluster_id(ClusterId::Outline);
+                }
+            }
         }
+    }
+
+    /// Checking the weather two points are density reachable
+    /// * `p` - First point
+    /// * `q` - Second point
+    fn density_reachable(&self, p: &PointWrapper<F>, q: &PointWrapper<F>) -> bool {
+        true
     }
 
     /// Returning the clustered points
