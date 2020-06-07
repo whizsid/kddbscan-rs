@@ -7,7 +7,7 @@ pub struct Coordinate {
 }
 
 impl IntoPoint for Coordinate {
-    fn get_distance(&self, neighbor: Coordinate) -> f64 {
+    fn get_distance(&self, neighbor: &Coordinate) -> f64 {
         0.0
     }
 }

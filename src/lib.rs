@@ -2,6 +2,8 @@ extern crate ordered_float;
 
 use ordered_float::OrderedFloat;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 /// Implement this trait to every point
 pub trait IntoPoint: Sized {
@@ -106,8 +108,8 @@ impl<F: IntoPoint> Kddbscan<F> {
     }
 
     /// Clustering all points
-    pub fn cluster(&self) {
-        let mut points_iter = self.points.iter();
+    pub fn cluster(&mut self) {
+        let mut points_iter = self.points.iter_mut();
 
         let mut c = 0;
         while let Some(point) = points_iter.next() {
@@ -142,15 +144,12 @@ impl<F: IntoPoint> Kddbscan<F> {
         }
     }
 
-    fn get_mutual_neighbors<'a, 'b: 'a>(
-        &'a self,
-        point: &'b PointWrapper<F>,
-    ) -> Vec<&PointWrapper<F>> {
+    fn get_mutual_neighbors<'a>(&'a self, point: &'a PointWrapper<F>) -> Vec<&'a PointWrapper<F>> {
         let mut neighbors = vec![];
 
         fn fill_mutual_neighbor<'a, 'b: 'a, T: IntoPoint>(
             inner_neighbors: &mut Vec<&'a PointWrapper<T>>,
-            kddbscan: &'b Kddbscan<T>,
+            kddbscan: &'a Kddbscan<T>,
             point: &'b PointWrapper<T>,
             n: u32,
         ) {
@@ -193,52 +192,61 @@ impl<F: IntoPoint> Kddbscan<F> {
         neighbors
     }
 
-    fn expand_cluster(&mut self, point: &mut PointWrapper<F>, cluster_id: usize) {
-        let ref_cell = RefCell::from(self);
-        let mut core_points: Vec<&mut PointWrapper<F>> = vec![];
+    fn expand_cluster(&mut self, point: &PointWrapper<F>, cluster_id: usize) {
+
+        // Storing cluster assign details in separate variable
+        // Because rust don't allowing to mutate the vector inside the loop
+        let mut cluster_assigns: HashMap<usize, ClusterId> = HashMap::new();
+        cluster_assigns.insert(point.get_id(), ClusterId::Classified(cluster_id));
+
+        // We are temporary storing points inside this vector
+        // See the ExpandCluster procedure in the research publication
+        let mut core_points: Vec<&PointWrapper<F>> = vec![];
         core_points.push(point);
 
-        for cur_point in core_points.iter_mut() {
-            let self_borrow = ref_cell.borrow();
-            let neighbor_ids: Vec<usize> = self_borrow
-                .get_mutual_neighbors(cur_point)
-                .iter()
-                .map(|wrapper| wrapper.get_id())
-                .collect();
+        // Creating a runtime borrow checker for the vector.
+        // We want to push items into this vector while iterating over the same vector
+        let core_points = RefCell::from(core_points);
 
-            cur_point.set_cluster_id(ClusterId::Classified(cluster_id));
+        let mut i = 0;
+        while i < core_points.borrow().len() {
+            let core_points_borrow = core_points.borrow();
+            let point_i = core_points_borrow.get(i).unwrap();
 
-            let mut self_borrow_mut = ref_cell.borrow_mut();
-            let neighbors_iter_mut = self_borrow_mut.points.iter_mut();
-            let neighbors: Vec<&mut PointWrapper<F>> = neighbors_iter_mut
-                .filter(|wrapper| neighbor_ids.iter().any(|id| id == &wrapper.get_id()))
-                .collect();
+            // Getting all mutual neighbors
+            let neighbors = self.get_mutual_neighbors(point_i);
 
-            for neighbor in neighbors {
-                match neighbor.get_cluster_id() {
+            for point_j in neighbors {
+                match point_j.get_cluster_id() {
                     ClusterId::Classified(_) => {}
                     _ => {
-                        neighbor.set_cluster_id(ClusterId::Classified(cluster_id));
+                        cluster_assigns.insert(point_j.get_id(), ClusterId::Classified(cluster_id));
                     }
                 }
 
-                let dev_density = self_borrow
-                    .calculate_deviation_factor(neighbor)
-                    .expect("Can not calculate deviation factor.")
-                    as u32;
+                let dev_density = {
+                    self.calculate_deviation_factor(point_j)
+                        .expect("Can not calculate deviation factor.") as u32
+                };
 
-                if dev_density <= self_borrow.deviation_factor
-                    && self_borrow.density_reachable(neighbor, cur_point)
+                if dev_density <= self.deviation_factor && self.density_reachable(point_j, point_i)
                 {
-                    core_points.push(neighbor);
+                    core_points.borrow_mut().push(point_j);
                 } else {
-                    neighbor.set_cluster_id(ClusterId::Outline);
+                    cluster_assigns.insert(point_j.get_id(), ClusterId::Outline);
                 }
             }
+
+            i += 1;
+        }
+
+        // Applying all stored allocations to the self points
+        for (k, v) in cluster_assigns {
+            self.points.get_mut(k).unwrap().set_cluster_id(v);
         }
     }
 
-    /// Checking the weather two points are density reachable
+    /// Checking the that weather two points are density reachable
     /// * `p` - First point
     /// * `q` - Second point
     fn density_reachable(&self, p: &PointWrapper<F>, q: &PointWrapper<F>) -> bool {
@@ -248,6 +256,10 @@ impl<F: IntoPoint> Kddbscan<F> {
     /// Returning the clustered points
     pub fn get_clusters(self) -> Vec<Cluster<F>> {
         self.clusters
+    }
+
+    fn get_points_mut(&mut self) -> Vec<&mut PointWrapper<F>> {
+        self.points.iter_mut().map(|point| point).collect()
     }
 }
 
@@ -262,7 +274,7 @@ pub fn cluster<T: IntoPoint>(
     n: Option<u32>,
     deviation_factor: Option<u32>,
 ) -> Vec<Cluster<T>> {
-    let kddbscan = Kddbscan::<T>::new::<T>(
+    let mut kddbscan = Kddbscan::<T>::new::<T>(
         points,
         k,
         n.unwrap_or(1),
