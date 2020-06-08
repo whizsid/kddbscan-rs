@@ -109,21 +109,24 @@ impl<F: IntoPoint> Kddbscan<F> {
 
     /// Clustering all points
     pub fn cluster(&mut self) {
-        let mut points_iter = self.points.iter_mut();
+        let self_rc = RefCell::new (self);
+        let mut self_mut = self_rc.borrow_mut();
+        let mut points_iter = self_mut.points.iter_mut();
 
         let mut c = 0;
         while let Some(point) = points_iter.next() {
             match point.get_cluster_id() {
                 ClusterId::Unclassified=>{
-                    let density = self.calculate_deviation_factor(point);
+                    let density = self_rc.borrow().calculate_deviation_factor(point).unwrap() as u32;
 
-                    if density <= self.deviation_factor {
-                        self.expand_cluster(point, c);
+                    if density <= self_rc.borrow().deviation_factor {
+                        self_rc.borrow_mut().expand_cluster(point, c);
                         c+=1;
                     } else {
                         point.set_cluster_id(ClusterId::Outline);
                     }
                 }
+                _=>{}
             }
         }
     }
