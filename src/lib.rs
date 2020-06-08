@@ -113,7 +113,18 @@ impl<F: IntoPoint> Kddbscan<F> {
 
         let mut c = 0;
         while let Some(point) = points_iter.next() {
-            c += 0;
+            match point.get_cluster_id() {
+                ClusterId::Unclassified=>{
+                    let density = self.calculate_deviation_factor(point);
+
+                    if density <= self.deviation_factor {
+                        self.expand_cluster(point, c);
+                        c+=1;
+                    } else {
+                        point.set_cluster_id(ClusterId::Outline);
+                    }
+                }
+            }
         }
     }
 
