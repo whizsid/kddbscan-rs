@@ -3,7 +3,6 @@ extern crate ordered_float;
 use ordered_float::OrderedFloat;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 /// Implement this trait to every point
 pub trait IntoPoint: Sized {
@@ -130,7 +129,7 @@ impl<F: IntoPoint> Kddbscan<F> {
             }
         }
     }
-
+    
     fn calculate_deviation_factor(&self, point: &PointWrapper<F>) -> Result<f64, &'static str> {
         let neighbors = self.get_mutual_neighbors(point);
 
@@ -158,6 +157,25 @@ impl<F: IntoPoint> Kddbscan<F> {
         }
     }
 
+    /// Getting the mutual k nearest neighbors for a given point
+    /// 
+    /// ### How to get k nearest neighbors?
+    /// 
+    /// > 1. Determine parameter K = number of nearest neighbors
+    /// > 2. Calculate the distance between the query-instance and all the training samples
+    /// > 3. Sort the distance and determine nearest neighbors based on the K-th minimum distance
+    /// > 4. Gather the category of the nearest neighbors
+    /// > 5. Use simple majority of the category of nearest neighbors as the prediction value of the query instance
+    /// 
+    /// [Read More](https://people.revoledu.com/kardi/tutorial/KNN/KNN_Numerical-example.html)
+    /// 
+    /// ### How to get mutual k nearest neighbor
+    /// 
+    /// > Given two points 𝑥𝑖 and 𝑥𝑗, if 𝑥𝑖 ∈ 𝑁𝑘(𝑥𝑗) and 𝑥𝑗 ∈ 𝑁𝑘(𝑥𝑖), then 𝑥𝑖
+    /// > and 𝑥𝑗 are mutual 𝑘-nearest neighbors. The mutual 𝑘-nearest
+    /// > neighborhood (mKNN) of a point 𝑥 is denoted by 𝑀𝑘(𝑥)
+    /// 
+    /// See the [Definition 2 of this research paper](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm)
     fn get_mutual_neighbors<'a>(&'a self, point: &'a PointWrapper<F>) -> Vec<&'a PointWrapper<F>> {
         let mut neighbors = vec![];
 
@@ -263,8 +281,41 @@ impl<F: IntoPoint> Kddbscan<F> {
     /// Checking the that weather two points are density reachable
     /// * `p` - First point
     /// * `q` - Second point
+    /// 
+    /// > A point 𝑝 is density reachable from a point 𝑞 if the 
+    /// > following conditions are satisfied:
+    /// 
+    /// > (1) ![Density Reachable 1st Equation](https://render.githubusercontent.com/render/math?math=max%28max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%20%29%20%5Cleq%20%5Calpha%20)
+    /// > (2) ![Density Reachable 2nd Equation](https://render.githubusercontent.com/render/math?math=max%28avg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx%29%29%20%2C%20avg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx%29%29%20%29%20%5Cleq%20%5Calpha%20)
+    /// > (3) ![Density Reachable 3rd Equation](https://render.githubusercontent.com/render/math?math=max%28max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%20%29%20%5Cleq%20%5Calpha%20)
+    /// > (4) ![Density Reachable 4th Equation](https://render.githubusercontent.com/render/math?math=max%28d%28p%2Cq%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Fd%28p%2Cq%29%20%29%20%5Cleq%20%5Calpha%20)
+    /// > (5) ![Density Reachable 5th Equation](https://render.githubusercontent.com/render/math?math=max%28d%28p%2Cq%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Fd%28p%2Cq%29%20%29%20%5Cleq%20%5Calpha%20)
+    /// 
+    /// > Where `d()` is the density function and ![NMk(x,n)](https://render.githubusercontent.com/render/math?math=NM_%7Bk%7D%28x%2Cn%29) is the mutual k nearest neighbors of x point
     fn density_reachable(&self, p: &PointWrapper<F>, q: &PointWrapper<F>) -> bool {
-        true
+        let p_mutual_neighbors = self.get_mutual_neighbors(p);
+        let q_mutual_neighbors = self.get_mutual_neighbors(q);
+
+        let p_distances: Vec<OrderedFloat<f64>> = p_mutual_neighbors.iter().map(|point|{ OrderedFloat::from(point.get_distance(p))}).collect();
+        let q_distances: Vec<OrderedFloat<f64>> = q_mutual_neighbors.iter().map(|point|{ OrderedFloat::from(point.get_distance(q))}).collect();
+
+        let p_max = p_distances.iter().max().unwrap().into_inner();
+        let q_max = q_distances.iter().max().unwrap().into_inner();
+        let p_len = p_distances.len();
+        let q_len = q_distances.len();
+        let p_sum = p_distances.iter().map(|ord_float|{ord_float.into_inner()}).sum::<f64>();
+        let q_sum = q_distances.iter().map(|ord_float|{ord_float.into_inner()}).sum::<f64>();
+        let p_avg = p_sum/(p_len as f64);
+        let q_avg = q_sum/(q_len as f64);
+        let p_to_q = p.get_distance(q);
+
+        let first = (p_max/q_max).max(q_max/p_max) <= self.deviation_factor as f64;
+        let second = (p_avg/q_avg).max(q_avg/p_avg) <= self.deviation_factor as f64;
+        let third = (p_max/q_avg).max(q_max/p_avg) <= self.deviation_factor as f64;
+        let fourth = (p_to_q/p_max).max(p_max/p_to_q) <= self.deviation_factor as f64;
+        let fifth = (p_to_q/q_max).max(q_max/p_to_q) <= self.deviation_factor as f64;
+
+        first && second && third && fourth && fifth
     }
 
     /// Returning the clustered points
