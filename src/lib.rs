@@ -216,8 +216,11 @@ impl<F: IntoPoint> Kddbscan<F> {
             while i <= kddbscan.k {
                 let in_point_result = points.get(i as usize);
                 if let Some(in_point) = in_point_result {
+                    // Do not stay in same point
                     if in_point.get_id() != point.get_id() {
+                        // Do not go again to the start point
                         if main_point.get_id() != in_point.get_id() {
+                            // Do not go again on same way
                             if !inner_neighbors.iter().any(|in_neighbor|{in_neighbor.get_id()==in_point.get_id()}) {
                                 // Recursively selecting mutual neighbors until original point met.
                                 fill_mutual_neighbor(inner_neighbors, kddbscan, main_point, in_point, n + 1);
