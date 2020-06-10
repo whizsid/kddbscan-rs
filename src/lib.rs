@@ -1,7 +1,6 @@
 extern crate ordered_float;
 
 use ordered_float::OrderedFloat;
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// Implement this trait to every point
@@ -13,6 +12,7 @@ pub trait IntoPoint: Sized {
 
 /// Cluster id types
 /// See `ExpandCluster` procedure in [this](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm) research.
+#[derive(Debug)]
 pub enum ClusterId {
     Outline,
     Unclassified,
@@ -108,26 +108,36 @@ impl<F: IntoPoint> Kddbscan<F> {
 
     /// Clustering all points
     pub fn cluster(&mut self) {
-        let self_rc = RefCell::new (self);
-        let mut self_mut = self_rc.borrow_mut();
-        let mut points_iter = self_mut.points.iter_mut();
+        let mut points_iter = self.points.iter();
 
         let mut c = 0;
+        let mut cluster_assigns:HashMap<usize, ClusterId>  = HashMap::new();
         while let Some(point) = points_iter.next() {
             match point.get_cluster_id() {
                 ClusterId::Unclassified=>{
-                    let density = self_rc.borrow().calculate_deviation_factor(point).unwrap() as u32;
 
-                    if density <= self_rc.borrow().deviation_factor {
-                        self_rc.borrow_mut().expand_cluster(point, c);
+                    let density = self.calculate_deviation_factor(point).unwrap();
+
+                    if density <= self.deviation_factor as f64{
+                        let tmp_cluster_assigns = self.expand_cluster(point, c);
+                        for (k, v) in tmp_cluster_assigns {
+                            cluster_assigns.insert(k, v);
+                        }
                         c+=1;
                     } else {
-                        point.set_cluster_id(ClusterId::Outline);
+                        cluster_assigns.insert(point.get_id(), ClusterId::Outline);
                     }
                 }
                 _=>{}
             }
         }
+
+        // Applying all stored allocations to the self points
+        for (k, v) in cluster_assigns {
+            println!("{}:{:?}",k,v);
+            self.points.get_mut(k).unwrap().set_cluster_id(v);
+        }
+
     }
     
     fn calculate_deviation_factor(&self, point: &PointWrapper<F>) -> Result<f64, &'static str> {
@@ -139,19 +149,18 @@ impl<F: IntoPoint> Kddbscan<F> {
             .collect();
 
         let max = distances.iter().max();
+        
         match max {
             Some(max) => {
                 let max = max.into_inner();
-                let filtered_distances: Vec<f64> = distances
-                    .iter()
-                    .filter(|distance| distance.into_inner() != max)
-                    .map(|distance| distance.into_inner())
-                    .collect();
+                
+                let all_distances: Vec<OrderedFloat<f64>> = self.points.iter().map(|p|{OrderedFloat::from(p.get_distance(point))}).collect();
+                let all_max = all_distances.iter().max().unwrap().into_inner();
+                let without_max: Vec<f64> = all_distances.iter().map(|d|{d.into_inner()}).filter(|d|{d!=&all_max}).collect();
 
-                let avg: f64 =
-                    filtered_distances.iter().sum::<f64>() / filtered_distances.len() as f64;
+                let all_avg = without_max.iter().sum::<f64>() / without_max.len() as f64;
 
-                Ok(max / avg)
+                Ok(max / all_avg)
             }
             None => Err("Can not find a neighbor"),
         }
@@ -182,6 +191,7 @@ impl<F: IntoPoint> Kddbscan<F> {
         fn fill_mutual_neighbor<'a, 'b: 'a, T: IntoPoint>(
             inner_neighbors: &mut Vec<&'a PointWrapper<T>>,
             kddbscan: &'a Kddbscan<T>,
+            main_point: &'a PointWrapper<T>,
             point: &'b PointWrapper<T>,
             n: u32,
         ) {
@@ -202,29 +212,29 @@ impl<F: IntoPoint> Kddbscan<F> {
             });
 
             // Selecting only k number of values
-            let mut i = 0;
-            while i < kddbscan.k {
+            let mut i = 1;
+            while i <= kddbscan.k {
                 let in_point_result = points.get(i as usize);
                 if let Some(in_point) = in_point_result {
                     if in_point.get_id() != point.get_id() {
-                        // Recursively selecting mutual neighbors until original point met.
-                        fill_mutual_neighbor(inner_neighbors, kddbscan, in_point, n + 1);
+                        if main_point.get_id() != in_point.get_id() {
+                            if !inner_neighbors.iter().any(|in_neighbor|{in_neighbor.get_id()==in_point.get_id()}) {
+                                // Recursively selecting mutual neighbors until original point met.
+                                fill_mutual_neighbor(inner_neighbors, kddbscan, main_point, in_point, n + 1);
+                            }
+                        }
                     }
                 }
                 i += 1;
             }
+
         }
 
-        fill_mutual_neighbor(&mut neighbors, self, point, 0);
-
-        // Removing duplicates
-        neighbors.sort_by(|a, b| a.get_id().cmp(&b.get_id()));
-        neighbors.dedup_by(|a, b| a.get_id() == b.get_id());
-
+        fill_mutual_neighbor(&mut neighbors, self, point, point, 0);
         neighbors
     }
 
-    fn expand_cluster(&mut self, point: &PointWrapper<F>, cluster_id: usize) {
+    fn expand_cluster(&self, point: &PointWrapper<F>, cluster_id: usize) -> HashMap<usize, ClusterId> {
 
         // Storing cluster assign details in separate variable
         // Because rust don't allowing to mutate the vector inside the loop
@@ -238,12 +248,10 @@ impl<F: IntoPoint> Kddbscan<F> {
 
         // Creating a runtime borrow checker for the vector.
         // We want to push items into this vector while iterating over the same vector
-        let core_points = RefCell::from(core_points);
 
         let mut i = 0;
-        while i < core_points.borrow().len() {
-            let core_points_borrow = core_points.borrow();
-            let point_i = core_points_borrow.get(i).unwrap();
+        while i < core_points.len() {
+            let point_i = core_points[i];
 
             // Getting all mutual neighbors
             let neighbors = self.get_mutual_neighbors(point_i);
@@ -258,12 +266,14 @@ impl<F: IntoPoint> Kddbscan<F> {
 
                 let dev_density = {
                     self.calculate_deviation_factor(point_j)
-                        .expect("Can not calculate deviation factor.") as u32
+                        .expect("Can not calculate deviation factor.") 
                 };
 
-                if dev_density <= self.deviation_factor && self.density_reachable(point_j, point_i)
+                let density_reachable = self.density_reachable(point_j, point_i);
+
+                if dev_density <= self.deviation_factor as f64 && density_reachable
                 {
-                    core_points.borrow_mut().push(point_j);
+                    core_points.push(point_j);
                 } else {
                     cluster_assigns.insert(point_j.get_id(), ClusterId::Outline);
                 }
@@ -272,10 +282,7 @@ impl<F: IntoPoint> Kddbscan<F> {
             i += 1;
         }
 
-        // Applying all stored allocations to the self points
-        for (k, v) in cluster_assigns {
-            self.points.get_mut(k).unwrap().set_cluster_id(v);
-        }
+        cluster_assigns
     }
 
     /// Checking the that weather two points are density reachable
@@ -321,10 +328,6 @@ impl<F: IntoPoint> Kddbscan<F> {
     /// Returning the clustered points
     pub fn get_clusters(self) -> Vec<Cluster<F>> {
         self.clusters
-    }
-
-    fn get_points_mut(&mut self) -> Vec<&mut PointWrapper<F>> {
-        self.points.iter_mut().map(|point| point).collect()
     }
 }
 
