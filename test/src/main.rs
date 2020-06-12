@@ -19,6 +19,6 @@ fn main() {
     coordinates.push(Coordinate{ x: 11.0, y:11.0});
     coordinates.push(Coordinate{ x: 1.0, y:2.0});
 
-    let clusters = cluster(coordinates, 3, None, Some(3));
+    let clusters = cluster(coordinates, 3, None, None);
     println!("Length of clusters is: {}", clusters.len());
 }

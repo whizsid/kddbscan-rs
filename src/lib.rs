@@ -23,7 +23,6 @@ pub enum ClusterId {
 /// such as cluster_id and index of the point
 pub struct PointWrapper<F: IntoPoint> {
     point: F,
-    cluster_id: ClusterId,
     index: usize,
 }
 
@@ -31,17 +30,8 @@ impl<F: IntoPoint> PointWrapper<F> {
     pub fn new(index: usize, point: F) -> PointWrapper<F> {
         PointWrapper {
             point,
-            index,
-            cluster_id: ClusterId::Unclassified,
+            index
         }
-    }
-
-    pub fn set_cluster_id(&mut self, cluster_id: ClusterId) {
-        self.cluster_id = cluster_id;
-    }
-
-    pub fn get_cluster_id(&self) -> &ClusterId {
-        &self.cluster_id
     }
 
     pub fn get_distance(&self, wrapper: &PointWrapper<F>) -> f64 {
@@ -113,13 +103,14 @@ impl<F: IntoPoint> Kddbscan<F> {
         let mut c = 0;
         let mut cluster_assigns:HashMap<usize, ClusterId>  = HashMap::new();
         while let Some(point) = points_iter.next() {
-            match point.get_cluster_id() {
+            let cluster_id = cluster_assigns.get(&point.get_id()).unwrap_or(&ClusterId::Unclassified);
+            match cluster_id {
                 ClusterId::Unclassified=>{
 
-                    let density = self.calculate_deviation_factor(point).unwrap();
+                    let density = self.deviation_density(point).unwrap();
 
                     if density <= self.deviation_factor as f64{
-                        let tmp_cluster_assigns = self.expand_cluster(point, c);
+                        let tmp_cluster_assigns = self.expand_cluster(&cluster_assigns, point, c);
                         for (k, v) in tmp_cluster_assigns {
                             cluster_assigns.insert(k, v);
                         }
@@ -135,12 +126,15 @@ impl<F: IntoPoint> Kddbscan<F> {
         // Applying all stored allocations to the self points
         for (k, v) in cluster_assigns {
             println!("{}:{:?}",k,v);
-            self.points.get_mut(k).unwrap().set_cluster_id(v);
         }
 
     }
     
-    fn calculate_deviation_factor(&self, point: &PointWrapper<F>) -> Result<f64, &'static str> {
+    /// Calculating the deviation density for a point
+    /// 
+    /// Deviation factor formula:-
+    /// > ![Deviation Factor Formula](https://render.githubusercontent.com/render/math?math=Dev_%7Bk%7D%28x%2Cn%29%3D%5Cfrac%7Bmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28x%2Cx_%7Bi%7D%29%29%7D%7Bavg_%7Bi%20%5Cvarepsilon%20argmax%28d%28x%2Cx_%7Bi%7D%29%29%20%7D%28d%28x%2Cx_%7Bi%7D%29%29%7D)
+    fn deviation_density(&self, point: &PointWrapper<F>) -> Result<f64, &'static str> {
         let neighbors = self.get_mutual_neighbors(point);
 
         let distances: Vec<OrderedFloat<f64>> = neighbors
@@ -237,7 +231,8 @@ impl<F: IntoPoint> Kddbscan<F> {
         neighbors
     }
 
-    fn expand_cluster(&self, point: &PointWrapper<F>, cluster_id: usize) -> HashMap<usize, ClusterId> {
+    /// Expanding the cluster
+    fn expand_cluster(&self, core_cluster_assigns: &HashMap<usize, ClusterId>, point: &PointWrapper<F>, cluster_id: usize) -> HashMap<usize, ClusterId> {
 
         // Storing cluster assign details in separate variable
         // Because rust don't allowing to mutate the vector inside the loop
@@ -258,9 +253,16 @@ impl<F: IntoPoint> Kddbscan<F> {
 
             // Getting all mutual neighbors
             let neighbors = self.get_mutual_neighbors(point_i);
+            cluster_assigns.insert(point_i.get_id(),ClusterId::Classified(cluster_id));
 
             for point_j in neighbors {
-                match point_j.get_cluster_id() {
+                let point_j_cluster_id = cluster_assigns.get(&point_j.get_id())
+                    .unwrap_or(
+                        core_cluster_assigns.get(&point_j.get_id())
+                            .unwrap_or(&ClusterId::Unclassified)
+                    );
+
+                match point_j_cluster_id {
                     ClusterId::Classified(_) => {}
                     _ => {
                         cluster_assigns.insert(point_j.get_id(), ClusterId::Classified(cluster_id));
@@ -268,7 +270,7 @@ impl<F: IntoPoint> Kddbscan<F> {
                 }
 
                 let dev_density = {
-                    self.calculate_deviation_factor(point_j)
+                    self.deviation_density(point_j)
                         .expect("Can not calculate deviation factor.") 
                 };
 
@@ -276,7 +278,9 @@ impl<F: IntoPoint> Kddbscan<F> {
 
                 if dev_density <= self.deviation_factor as f64 && density_reachable
                 {
-                    core_points.push(point_j);
+                    if !core_points.iter().any(|p|{p.get_id()==point_j.get_id()}) {
+                        core_points.push(point_j);
+                    }
                 } else {
                     cluster_assigns.insert(point_j.get_id(), ClusterId::Outline);
                 }
