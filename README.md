@@ -1,4 +1,6 @@
-# kddbscan-rs
+# kddbscan-rs 
+[![GitHub Actions](https://github.com/whizsid/kddbscan-rs/workflows/Main/badge.svg)](https://github.com/whizsid/kddbscan-rs/actions) [![crates.io](http://meritbadge.herokuapp.com/kddbscan)](https://crates.io/crates/kddbscan) [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Released API docs](https://docs.rs/kddbscan/badge.svg)](http://docs.rs/kddbscan) [![Master API docs](https://img.shields.io/badge/docs-master-green.svg)](https://docs.rs/kddbscan)
+
 Rust implementation of the kddbscan clustering algorithm.
 
 From the authors of kDDBSCAN algorithm.
@@ -63,8 +65,12 @@ fn main() {
 
 This is the output of example project.
 
-![Output of the kddbscan algorithm](./example/src/result.png)
+![Output of the kddbscan algorithm](./example/result.png)
 
 ## Contribution
 
-All PRs and issues are welcome. and starts are also welcome. This project is under the MIT license and the algorithm is under the CC BY 4.0 license.
+All PRs and issues are welcome. and starts are also welcome.
+
+## License
+
+This project is under the MIT license and the algorithm is under the CC BY 4.0 license.
