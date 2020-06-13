@@ -1,0 +1,25 @@
+{
+  "configurations": {
+    "vscode-cpptools: Launch": {
+      "adapter": "vscode-cpptools",
+      "configuration": {
+		"type": "lldb",
+            	"request": "launch",
+            	"name": "Debug executable 'kddbscan-test'",
+            	"cargo": {
+                	"args": [
+                    		"build",
+                    		"--bin=kddbscan-test",
+                    		"--package=kddbscan-test"
+                	],
+                	"filter": {
+                    		"name": "kddbscan-test",
+                    		"kind": "bin"
+                	}
+            	},
+            	"args": [],
+            	"cwd": "${workspaceFolder}"
+	}
+    }
+  }
+}

@@ -3,14 +3,14 @@
 //! [Research Paper](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm)
 //!
 //! > Due to the adoption of global parameters, DBSCAN fails to
-//! > identify clusters with different and varied densities. To 
-//! > solve the problem, this paper extends DBSCAN by exploiting 
-//! > a new density definition and proposes a novel algorithm 
-//! > called k -deviation density based DBSCAN (kDDBSCAN). Various 
-//! > datasets containing clusters with arbitrary shapes and 
-//! > different or varied densities are used to demonstrate the 
-//! > performance and investigate the feasibility and practicality 
-//! > of kDDBSCAN. The results show that kDDBSCAN performs 
+//! > identify clusters with different and varied densities. To
+//! > solve the problem, this paper extends DBSCAN by exploiting
+//! > a new density definition and proposes a novel algorithm
+//! > called k -deviation density based DBSCAN (kDDBSCAN). Various
+//! > datasets containing clusters with arbitrary shapes and
+//! > different or varied densities are used to demonstrate the
+//! > performance and investigate the feasibility and practicality
+//! > of kDDBSCAN. The results show that kDDBSCAN performs
 //! > better than DBSCAN.
 //!
 //! # Installation
@@ -21,24 +21,24 @@
 //! [dependencies]
 //! kddbscan = "0.1.0"
 //! ```
-//! 
+//!
 //! # Usage
-//! 
+//!
 //! ```rust
 //! use kddbscan::{cluster, IntoPoint};
-//! 
+//!
 //! pub struct Coordinate {
 //!     pub x: f64,
 //!     pub y: f64,
 //! }
-//! 
+//!
 //! // Implement IntoPoint trait to your data structur
 //! impl IntoPoint for Coordinate {
 //!     fn get_distance(&self, neighbor: &Coordinate) -> f64 {
 //!         ((self.x - neighbor.x).powi(2) + (self.y - neighbor.y).powi(2)).powf(0.5)
 //!     }
 //! }
-//! 
+//!
 //! fn main() {
 //!     // Create a vector with your data
 //!     let mut coordinates: Vec<Coordinate> = vec![];    
@@ -48,7 +48,7 @@
 //!     coordinates.push(Coordinate { x: 11.0, y: 11.0 });
 //!     coordinates.push(Coordinate { x: 1.0, y: 2.0 });
 //!     coordinates.push(Coordinate { x: 3.0, y: 1.0 });
-//! 
+//!
 //!     // Call cluster function
 //!     let clustered =  cluster(coordinates, 2, None, None);
 //!     let first_cluster_id = clustered.get(0).unwrap().get_cluster_id();
@@ -73,7 +73,7 @@ pub trait IntoPoint: Sized {
 }
 
 /// Cluster id types
-/// 
+///
 /// > See `ExpandCluster` procedure in [this](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm) research.
 #[derive(Debug, PartialEq)]
 pub enum ClusterId {
@@ -118,7 +118,7 @@ impl<F: IntoPoint> PointWrapper<F> {
     }
 
     /// Returns a reference to the original point
-    pub fn into_inner(&self)-> &F {
+    pub fn into_inner(&self) -> &F {
         &self.point
     }
 }
@@ -130,7 +130,7 @@ struct Kddbscan<F: IntoPoint> {
     points: Vec<PointWrapper<F>>,
     k: u32,
     n: u32,
-    deviation_factor: u32
+    deviation_factor: u32,
 }
 
 impl<F: IntoPoint> Kddbscan<F> {
@@ -147,7 +147,7 @@ impl<F: IntoPoint> Kddbscan<F> {
             points: wrappers,
             k,
             n,
-            deviation_factor
+            deviation_factor,
         }
     }
 
@@ -445,4 +445,73 @@ pub fn cluster<T: IntoPoint>(
     let clusters = kddbscan.get_clustered();
 
     clusters
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub struct Coordinate {
+        pub x: f64,
+        pub y: f64,
+    }
+
+    impl IntoPoint for Coordinate {
+        fn get_distance(&self, neighbor: &Coordinate) -> f64 {
+            ((self.x - neighbor.x).powi(2) + (self.y - neighbor.y).powi(2)).powf(0.5)
+        }
+    }
+
+    fn create_kddbscan(k: u32) -> Kddbscan<Coordinate> {
+        let mut coordinates: Vec<Coordinate> = vec![];
+        coordinates.push(Coordinate { x: 11.0, y: 12.0 });
+        coordinates.push(Coordinate { x: 0.0, y: 0.0 });
+        coordinates.push(Coordinate { x: 12.0, y: 11.0 });
+        coordinates.push(Coordinate { x: 11.0, y: 11.0 });
+        coordinates.push(Coordinate { x: 1.0, y: 2.0 });
+        coordinates.push(Coordinate { x: 3.0, y: 1.0 });
+
+        Kddbscan::<Coordinate>::new::<Coordinate>(coordinates, k, 1, 999999)
+    }
+
+    #[test]
+    fn test_mutual_neighbor() {
+        let kddbscan_2 = create_kddbscan(2);
+        let point_wrapper = kddbscan_2.points.get(0).unwrap();
+        let mutual_neighbors = kddbscan_2.get_mutual_neighbors(point_wrapper);
+        assert_eq!(mutual_neighbors.len(), 2);
+        assert_eq!(mutual_neighbors.get(0).unwrap().get_id(), 3);
+        assert_eq!(mutual_neighbors.get(1).unwrap().get_id(), 2);
+
+        let kddbscan_3 = create_kddbscan(3);
+        let point_wrapper = kddbscan_3.points.get(0).unwrap();
+        let mutual_neighbors = kddbscan_3.get_mutual_neighbors(point_wrapper);
+        assert_eq!(mutual_neighbors.len(), 5);
+    }
+
+    #[test]
+    fn test_deviation_density() {
+        let kddbscan = create_kddbscan(2);
+        let point_wrapper = kddbscan.points.get(0).unwrap();
+        let deviation_density = kddbscan.deviation_density(point_wrapper).unwrap();
+        assert!(deviation_density<0.24 && deviation_density>0.22);
+
+
+        let point_wrapper = kddbscan.points.get(1).unwrap();
+        let deviation_density = kddbscan.deviation_density(point_wrapper).unwrap();
+
+        assert!(deviation_density<0.61 && deviation_density>0.60);
+    }
+
+    #[test]
+    fn test_density_reachable(){
+        let kddbscan = create_kddbscan(2);
+        let density_reachable = kddbscan.density_reachable(
+            kddbscan.points.get(0).unwrap()
+            , 
+            kddbscan.points.get(1).unwrap()
+        );
+
+        assert!(density_reachable);
+    }
 }
