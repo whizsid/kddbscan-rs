@@ -1,18 +1,81 @@
+//! A k -Deviation Density Based Clustering Algorithm (kDDBSCAN)
+//!
+//! [Research Paper](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm)
+//!
+//! > Due to the adoption of global parameters, DBSCAN fails to
+//! > identify clusters with different and varied densities. To 
+//! > solve the problem, this paper extends DBSCAN by exploiting 
+//! > a new density definition and proposes a novel algorithm 
+//! > called k -deviation density based DBSCAN (kDDBSCAN). Various 
+//! > datasets containing clusters with arbitrary shapes and 
+//! > different or varied densities are used to demonstrate the 
+//! > performance and investigate the feasibility and practicality 
+//! > of kDDBSCAN. The results show that kDDBSCAN performs 
+//! > better than DBSCAN.
+//!
+//! # Installation
+//!
+//! Add the following to your `Cargo.toml` file:
+//!
+//! ```toml
+//! [dependencies]
+//! kddbscan = "0.1.0"
+//! ```
+//! 
+//! # Usage
+//! 
+//! ```rust
+//! use kddbscan::{cluster, IntoPoint};
+//! 
+//! pub struct Coordinate {
+//!     pub x: f64,
+//!     pub y: f64,
+//! }
+//! 
+//! // Implement IntoPoint trait to your data structur
+//! impl IntoPoint for Coordinate {
+//!     fn get_distance(&self, neighbor: &Coordinate) -> f64 {
+//!         ((self.x - neighbor.x).powi(2) + (self.y - neighbor.y).powi(2)).powf(0.5)
+//!     }
+//! }
+//! 
+//! fn main() {
+//!     // Create a vector with your data
+//!     let mut coordinates: Vec<Coordinate> = vec![];    
+//!     coordinates.push(Coordinate { x: 11.0, y: 12.0 });
+//!     coordinates.push(Coordinate { x: 0.0, y: 0.0 });
+//!     coordinates.push(Coordinate { x: 12.0, y: 11.0 });
+//!     coordinates.push(Coordinate { x: 11.0, y: 11.0 });
+//!     coordinates.push(Coordinate { x: 1.0, y: 2.0 });
+//!     coordinates.push(Coordinate { x: 3.0, y: 1.0 });
+//! 
+//!     // Call cluster function
+//!     let clustered =  cluster(coordinates, 2, None, None);
+//!     let first_cluster_id = clustered.get(0).unwrap().get_cluster_id();
+//!     let second_cluster_id = clustered.get(1).unwrap().get_cluster_id();
+//!     
+//!     assert_eq!(first_cluster_id, clustered.get(2).unwrap().get_cluster_id());
+//!     assert_eq!(first_cluster_id, clustered.get(3).unwrap().get_cluster_id());
+//!     assert_eq!(second_cluster_id, clustered.get(4).unwrap().get_cluster_id());
+//!     assert_eq!(second_cluster_id, clustered.get(5).unwrap().get_cluster_id());
+//! }
+//! ```
+
 extern crate ordered_float;
 
 use ordered_float::OrderedFloat;
 use std::collections::HashMap;
 
-/// Implement this trait to every point
+/// You should implement `IntoPoint` for all points
 pub trait IntoPoint: Sized {
-    /// Calculating the distance to another point
-    /// * `neighbor` - Other point
+    /// Returns the distance to another point in the dataset
     fn get_distance(&self, neighbor: &Self) -> f64;
 }
 
 /// Cluster id types
-/// See `ExpandCluster` procedure in [this](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm) research.
-#[derive(Debug)]
+/// 
+/// > See `ExpandCluster` procedure in [this](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm) research.
+#[derive(Debug, PartialEq)]
 pub enum ClusterId {
     Outline,
     Unclassified,
@@ -23,58 +86,51 @@ pub enum ClusterId {
 /// such as cluster_id and index of the point
 pub struct PointWrapper<F: IntoPoint> {
     point: F,
+    cluster_id: ClusterId,
     index: usize,
 }
 
 impl<F: IntoPoint> PointWrapper<F> {
-    pub fn new(index: usize, point: F) -> PointWrapper<F> {
+    fn new(index: usize, point: F) -> PointWrapper<F> {
         PointWrapper {
             point,
-            index
+            index,
+            cluster_id: ClusterId::Unclassified,
         }
     }
 
-    pub fn get_distance(&self, wrapper: &PointWrapper<F>) -> f64 {
+    fn set_cluster_id(&mut self, cluster_id: ClusterId) {
+        self.cluster_id = cluster_id;
+    }
+
+    /// Returns the cluster id
+    pub fn get_cluster_id(&self) -> &ClusterId {
+        &self.cluster_id
+    }
+
+    fn get_distance(&self, wrapper: &PointWrapper<F>) -> f64 {
         self.point.get_distance(&wrapper.point)
     }
 
+    /// Returns the index of the point
     pub fn get_id(&self) -> usize {
         self.index
     }
-}
 
-pub struct Cluster<F> {
-    points: Vec<F>,
-    id: u32,
-}
-
-impl<F> Cluster<F> {
-    pub fn new(id: u32) -> Self {
-        Cluster { id, points: vec![] }
-    }
-
-    pub fn add_point(&mut self, point: F) {
-        self.points.push(point);
-    }
-
-    pub fn get_points(&self) -> &Vec<F> {
-        self.points.as_ref()
-    }
-
-    pub fn get_id(&self) -> u32 {
-        self.id
+    /// Returns a reference to the original point
+    pub fn into_inner(&self)-> &F {
+        &self.point
     }
 }
 
 /// k-Deviation Density Based Clustering Algorithm
 ///
 /// [Read More](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm)
-pub struct Kddbscan<F: IntoPoint> {
+struct Kddbscan<F: IntoPoint> {
     points: Vec<PointWrapper<F>>,
     k: u32,
     n: u32,
-    deviation_factor: u32,
-    clusters: Vec<Cluster<F>>,
+    deviation_factor: u32
 }
 
 impl<F: IntoPoint> Kddbscan<F> {
@@ -91,8 +147,7 @@ impl<F: IntoPoint> Kddbscan<F> {
             points: wrappers,
             k,
             n,
-            deviation_factor,
-            clusters: vec![],
+            deviation_factor
         }
     }
 
@@ -101,37 +156,36 @@ impl<F: IntoPoint> Kddbscan<F> {
         let mut points_iter = self.points.iter();
 
         let mut c = 0;
-        let mut cluster_assigns:HashMap<usize, ClusterId>  = HashMap::new();
+        let mut cluster_assigns: HashMap<usize, ClusterId> = HashMap::new();
         while let Some(point) = points_iter.next() {
-            let cluster_id = cluster_assigns.get(&point.get_id()).unwrap_or(&ClusterId::Unclassified);
+            let cluster_id = cluster_assigns
+                .get(&point.get_id())
+                .unwrap_or(&ClusterId::Unclassified);
             match cluster_id {
-                ClusterId::Unclassified=>{
-
+                ClusterId::Unclassified => {
                     let density = self.deviation_density(point).unwrap();
 
-                    if density <= self.deviation_factor as f64{
+                    if density <= self.deviation_factor as f64 {
                         let tmp_cluster_assigns = self.expand_cluster(&cluster_assigns, point, c);
                         for (k, v) in tmp_cluster_assigns {
                             cluster_assigns.insert(k, v);
                         }
-                        c+=1;
+                        c += 1;
                     } else {
                         cluster_assigns.insert(point.get_id(), ClusterId::Outline);
                     }
                 }
-                _=>{}
+                _ => {}
             }
         }
 
         // Applying all stored allocations to the self points
         for (k, v) in cluster_assigns {
-            println!("{}:{:?}",k,v);
+            self.points.get_mut(k).unwrap().set_cluster_id(v);
         }
-
     }
-    
     /// Calculating the deviation density for a point
-    /// 
+    ///
     /// Deviation factor formula:-
     /// > ![Deviation Factor Formula](https://render.githubusercontent.com/render/math?math=Dev_%7Bk%7D%28x%2Cn%29%3D%5Cfrac%7Bmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28x%2Cx_%7Bi%7D%29%29%7D%7Bavg_%7Bi%20%5Cvarepsilon%20argmax%28d%28x%2Cx_%7Bi%7D%29%29%20%7D%28d%28x%2Cx_%7Bi%7D%29%29%7D)
     fn deviation_density(&self, point: &PointWrapper<F>) -> Result<f64, &'static str> {
@@ -143,14 +197,21 @@ impl<F: IntoPoint> Kddbscan<F> {
             .collect();
 
         let max = distances.iter().max();
-        
         match max {
             Some(max) => {
                 let max = max.into_inner();
-                
-                let all_distances: Vec<OrderedFloat<f64>> = self.points.iter().map(|p|{OrderedFloat::from(p.get_distance(point))}).collect();
+
+                let all_distances: Vec<OrderedFloat<f64>> = self
+                    .points
+                    .iter()
+                    .map(|p| OrderedFloat::from(p.get_distance(point)))
+                    .collect();
                 let all_max = all_distances.iter().max().unwrap().into_inner();
-                let without_max: Vec<f64> = all_distances.iter().map(|d|{d.into_inner()}).filter(|d|{d!=&all_max}).collect();
+                let without_max: Vec<f64> = all_distances
+                    .iter()
+                    .map(|d| d.into_inner())
+                    .filter(|d| d != &all_max)
+                    .collect();
 
                 let all_avg = without_max.iter().sum::<f64>() / without_max.len() as f64;
 
@@ -161,23 +222,23 @@ impl<F: IntoPoint> Kddbscan<F> {
     }
 
     /// Getting the mutual k nearest neighbors for a given point
-    /// 
+    ///
     /// ### How to get k nearest neighbors?
-    /// 
+    ///
     /// > 1. Determine parameter K = number of nearest neighbors
     /// > 2. Calculate the distance between the query-instance and all the training samples
     /// > 3. Sort the distance and determine nearest neighbors based on the K-th minimum distance
     /// > 4. Gather the category of the nearest neighbors
     /// > 5. Use simple majority of the category of nearest neighbors as the prediction value of the query instance
-    /// 
+    ///
     /// [Read More](https://people.revoledu.com/kardi/tutorial/KNN/KNN_Numerical-example.html)
-    /// 
+    ///
     /// ### How to get mutual k nearest neighbor
-    /// 
+    ///
     /// > Given two points 𝑥𝑖 and 𝑥𝑗, if 𝑥𝑖 ∈ 𝑁𝑘(𝑥𝑗) and 𝑥𝑗 ∈ 𝑁𝑘(𝑥𝑖), then 𝑥𝑖
     /// > and 𝑥𝑗 are mutual 𝑘-nearest neighbors. The mutual 𝑘-nearest
     /// > neighborhood (mKNN) of a point 𝑥 is denoted by 𝑀𝑘(𝑥)
-    /// 
+    ///
     /// See the [Definition 2 of this research paper](https://www.researchgate.net/publication/323424266_A_k_-Deviation_Density_Based_Clustering_Algorithm)
     fn get_mutual_neighbors<'a>(&'a self, point: &'a PointWrapper<F>) -> Vec<&'a PointWrapper<F>> {
         let mut neighbors = vec![];
@@ -215,16 +276,24 @@ impl<F: IntoPoint> Kddbscan<F> {
                         // Do not go again to the start point
                         if main_point.get_id() != in_point.get_id() {
                             // Do not go again on same way
-                            if !inner_neighbors.iter().any(|in_neighbor|{in_neighbor.get_id()==in_point.get_id()}) {
+                            if !inner_neighbors
+                                .iter()
+                                .any(|in_neighbor| in_neighbor.get_id() == in_point.get_id())
+                            {
                                 // Recursively selecting mutual neighbors until original point met.
-                                fill_mutual_neighbor(inner_neighbors, kddbscan, main_point, in_point, n + 1);
+                                fill_mutual_neighbor(
+                                    inner_neighbors,
+                                    kddbscan,
+                                    main_point,
+                                    in_point,
+                                    n + 1,
+                                );
                             }
                         }
                     }
                 }
                 i += 1;
             }
-
         }
 
         fill_mutual_neighbor(&mut neighbors, self, point, point, 0);
@@ -232,8 +301,12 @@ impl<F: IntoPoint> Kddbscan<F> {
     }
 
     /// Expanding the cluster
-    fn expand_cluster(&self, core_cluster_assigns: &HashMap<usize, ClusterId>, point: &PointWrapper<F>, cluster_id: usize) -> HashMap<usize, ClusterId> {
-
+    fn expand_cluster(
+        &self,
+        core_cluster_assigns: &HashMap<usize, ClusterId>,
+        point: &PointWrapper<F>,
+        cluster_id: usize,
+    ) -> HashMap<usize, ClusterId> {
         // Storing cluster assign details in separate variable
         // Because rust don't allowing to mutate the vector inside the loop
         let mut cluster_assigns: HashMap<usize, ClusterId> = HashMap::new();
@@ -253,14 +326,14 @@ impl<F: IntoPoint> Kddbscan<F> {
 
             // Getting all mutual neighbors
             let neighbors = self.get_mutual_neighbors(point_i);
-            cluster_assigns.insert(point_i.get_id(),ClusterId::Classified(cluster_id));
+            cluster_assigns.insert(point_i.get_id(), ClusterId::Classified(cluster_id));
 
             for point_j in neighbors {
-                let point_j_cluster_id = cluster_assigns.get(&point_j.get_id())
-                    .unwrap_or(
-                        core_cluster_assigns.get(&point_j.get_id())
-                            .unwrap_or(&ClusterId::Unclassified)
-                    );
+                let point_j_cluster_id = cluster_assigns.get(&point_j.get_id()).unwrap_or(
+                    core_cluster_assigns
+                        .get(&point_j.get_id())
+                        .unwrap_or(&ClusterId::Unclassified),
+                );
 
                 match point_j_cluster_id {
                     ClusterId::Classified(_) => {}
@@ -271,14 +344,13 @@ impl<F: IntoPoint> Kddbscan<F> {
 
                 let dev_density = {
                     self.deviation_density(point_j)
-                        .expect("Can not calculate deviation factor.") 
+                        .expect("Can not calculate deviation factor.")
                 };
 
                 let density_reachable = self.density_reachable(point_j, point_i);
 
-                if dev_density <= self.deviation_factor as f64 && density_reachable
-                {
-                    if !core_points.iter().any(|p|{p.get_id()==point_j.get_id()}) {
+                if dev_density <= self.deviation_factor as f64 && density_reachable {
+                    if !core_points.iter().any(|p| p.get_id() == point_j.get_id()) {
                         core_points.push(point_j);
                     }
                 } else {
@@ -295,46 +367,58 @@ impl<F: IntoPoint> Kddbscan<F> {
     /// Checking the that weather two points are density reachable
     /// * `p` - First point
     /// * `q` - Second point
-    /// 
-    /// > A point 𝑝 is density reachable from a point 𝑞 if the 
+    ///
+    /// > A point 𝑝 is density reachable from a point 𝑞 if the
     /// > following conditions are satisfied:
-    /// 
+    ///
     /// > (1) ![Density Reachable 1st Equation](https://render.githubusercontent.com/render/math?math=max%28max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%20%29%20%5Cleq%20%5Calpha%20)
     /// > (2) ![Density Reachable 2nd Equation](https://render.githubusercontent.com/render/math?math=max%28avg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx%29%29%20%2C%20avg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx%29%29%20%29%20%5Cleq%20%5Calpha%20)
     /// > (3) ![Density Reachable 3rd Equation](https://render.githubusercontent.com/render/math?math=max%28max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Favg_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%20%29%20%5Cleq%20%5Calpha%20)
     /// > (4) ![Density Reachable 4th Equation](https://render.githubusercontent.com/render/math?math=max%28d%28p%2Cq%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28p%2Cx_%7Bi%7D%29%29%2Fd%28p%2Cq%29%20%29%20%5Cleq%20%5Calpha%20)
     /// > (5) ![Density Reachable 5th Equation](https://render.githubusercontent.com/render/math?math=max%28d%28p%2Cq%29%2Fmax_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%20%2C%20max_%7Bx_%7Bi%7D%5Cepsilon%20NM_%7Bk%7D%28x%2Cn%29%7D%28d%28q%2Cx_%7Bi%7D%29%29%2Fd%28p%2Cq%29%20%29%20%5Cleq%20%5Calpha%20)
-    /// 
+    ///
     /// > Where `d()` is the density function and ![NMk(x,n)](https://render.githubusercontent.com/render/math?math=NM_%7Bk%7D%28x%2Cn%29) is the mutual k nearest neighbors of x point
     fn density_reachable(&self, p: &PointWrapper<F>, q: &PointWrapper<F>) -> bool {
         let p_mutual_neighbors = self.get_mutual_neighbors(p);
         let q_mutual_neighbors = self.get_mutual_neighbors(q);
 
-        let p_distances: Vec<OrderedFloat<f64>> = p_mutual_neighbors.iter().map(|point|{ OrderedFloat::from(point.get_distance(p))}).collect();
-        let q_distances: Vec<OrderedFloat<f64>> = q_mutual_neighbors.iter().map(|point|{ OrderedFloat::from(point.get_distance(q))}).collect();
+        let p_distances: Vec<OrderedFloat<f64>> = p_mutual_neighbors
+            .iter()
+            .map(|point| OrderedFloat::from(point.get_distance(p)))
+            .collect();
+        let q_distances: Vec<OrderedFloat<f64>> = q_mutual_neighbors
+            .iter()
+            .map(|point| OrderedFloat::from(point.get_distance(q)))
+            .collect();
 
         let p_max = p_distances.iter().max().unwrap().into_inner();
         let q_max = q_distances.iter().max().unwrap().into_inner();
         let p_len = p_distances.len();
         let q_len = q_distances.len();
-        let p_sum = p_distances.iter().map(|ord_float|{ord_float.into_inner()}).sum::<f64>();
-        let q_sum = q_distances.iter().map(|ord_float|{ord_float.into_inner()}).sum::<f64>();
-        let p_avg = p_sum/(p_len as f64);
-        let q_avg = q_sum/(q_len as f64);
+        let p_sum = p_distances
+            .iter()
+            .map(|ord_float| ord_float.into_inner())
+            .sum::<f64>();
+        let q_sum = q_distances
+            .iter()
+            .map(|ord_float| ord_float.into_inner())
+            .sum::<f64>();
+        let p_avg = p_sum / (p_len as f64);
+        let q_avg = q_sum / (q_len as f64);
         let p_to_q = p.get_distance(q);
 
-        let first = (p_max/q_max).max(q_max/p_max) <= self.deviation_factor as f64;
-        let second = (p_avg/q_avg).max(q_avg/p_avg) <= self.deviation_factor as f64;
-        let third = (p_max/q_avg).max(q_max/p_avg) <= self.deviation_factor as f64;
-        let fourth = (p_to_q/p_max).max(p_max/p_to_q) <= self.deviation_factor as f64;
-        let fifth = (p_to_q/q_max).max(q_max/p_to_q) <= self.deviation_factor as f64;
+        let first = (p_max / q_max).max(q_max / p_max) <= self.deviation_factor as f64;
+        let second = (p_avg / q_avg).max(q_avg / p_avg) <= self.deviation_factor as f64;
+        let third = (p_max / q_avg).max(q_max / p_avg) <= self.deviation_factor as f64;
+        let fourth = (p_to_q / p_max).max(p_max / p_to_q) <= self.deviation_factor as f64;
+        let fifth = (p_to_q / q_max).max(q_max / p_to_q) <= self.deviation_factor as f64;
 
         first && second && third && fourth && fifth
     }
 
     /// Returning the clustered points
-    pub fn get_clusters(self) -> Vec<Cluster<F>> {
-        self.clusters
+    pub fn get_clustered(self) -> Vec<PointWrapper<F>> {
+        self.points
     }
 }
 
@@ -348,7 +432,7 @@ pub fn cluster<T: IntoPoint>(
     k: u32,
     n: Option<u32>,
     deviation_factor: Option<u32>,
-) -> Vec<Cluster<T>> {
+) -> Vec<PointWrapper<T>> {
     let mut kddbscan = Kddbscan::<T>::new::<T>(
         points,
         k,
@@ -358,7 +442,7 @@ pub fn cluster<T: IntoPoint>(
 
     kddbscan.cluster();
 
-    let clusters = kddbscan.get_clusters();
+    let clusters = kddbscan.get_clustered();
 
     clusters
 }
