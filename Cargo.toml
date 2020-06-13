@@ -7,16 +7,13 @@ license = "MIT"
 keywords = ["data-science", "cluster", "clustering","dynamic","density","machine-learing","deviation"]
 homepage = "https://github.com/whizsid/kddbscan-rs"
 repository = "https://github.com/whizsid/kddbscan-rs"
-
+documentation = "https://docs.rs/kddbscan"
+edition = "2018"
+readme = "README.md"
 description = """
 A k -Deviation Density Based Clustering Algorithm (kDDBSCAN)
 """
 
+
 [dependencies]
 ordered-float = "1.0.2"
-
-[workspace]
-
-members = [
-    "example"
-]
