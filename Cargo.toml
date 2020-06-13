@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["WhizSid <whizsid@aol.com>"]
 
 license = "MIT"
-keywords = ["data-science", "cluster", "clustering","dynamic","density","machine-learing","deviation"]
+keywords = ["data-science", "cluster", "dynamic","density","deviation"]
 homepage = "https://github.com/whizsid/kddbscan-rs"
 repository = "https://github.com/whizsid/kddbscan-rs"
 documentation = "https://docs.rs/kddbscan"
